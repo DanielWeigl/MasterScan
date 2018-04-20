@@ -2,6 +2,8 @@
 
 const _ = require('lodash');
 
+const bip39 = require('bip39');
+const bitcoin = require('bitcoinjs-lib');
 const bitcore = require('bitcore-lib');
 const HDPrivateKey = bitcore.HDPrivateKey;
 const HDPublicKey = bitcore.HDPublicKey;
@@ -11,19 +13,18 @@ const Transaction = bitcore.Transaction;
 
 const UnspentOutput = Transaction.UnspentOutput;
 
-const Mnemonic = require('bitcore-mnemonic');
 
 class Masterscan {
 
-    constructor(masterSeed, passphrase, network = Networks.defaultNetwork, insight) {
-        this.coinid = network === Networks.livenet ? 0 : 1;
-        this.context = {network:network, insight: insight};
+    constructor(masterSeed, passphrase, network, insight) {
+        this.coinid = (network === bitcoin.networks.bitcoin ? 0 : 1);
+        this.context = {network: network, insight: insight};
         try {
-            this.masterseed = new Mnemonic(masterSeed);  // throws bitcore.ErrorMnemonicUnknownWordlist or bitcore.ErrorMnemonicInvalidMnemonic if not valid
-            this.rootnode =  this.masterseed.toHDPrivateKey(passphrase, network);
-        } catch (e){
-            if (e.name == "bitcore.ErrorMnemonicUnknownWordlist" || e.name =="bitcore.ErrorMnemonicInvalidMnemonic") {
-                if (passphrase != ''){
+            this.masterseed = bip39.mnemonicToSeed(masterSeed, passphrase);  // TODO throws bitcore.ErrorMnemonicUnknownWordlist or bitcore.ErrorMnemonicInvalidMnemonic if not valid
+            this.rootnode = bitcoin.HDNode.fromSeedBuffer(this.masterseed, network)
+        } catch (e) {
+            if (e.name == "bitcore.ErrorMnemonicUnknownWordlist" || e.name == "bitcore.ErrorMnemonicInvalidMnemonic") {
+                if (passphrase != '') {
                     throw {message: 'Passphrase is only supported for wordlists', name: 'errMasterseed'};
                 }
                 try {
@@ -35,8 +36,8 @@ class Masterscan {
                     } else {
                         throw {message: e.message, name: 'errMasterseed'};
                     }
-                }catch (e2){
-                    if (e2.name == "bitcore.ErrorInvalidB58Checksum"){
+                } catch (e2) {
+                    if (e2.name == "bitcore.ErrorInvalidB58Checksum") {
                         throw {message: e.message, name: 'errMasterseed'};
                     } else {
                         throw e2;
@@ -46,23 +47,24 @@ class Masterscan {
                 throw e;
             }
         }
-        this.maxAccountGap = 6;
-        this.maxChainGap = {external: 25, change: 5};
+        this.maxAccountGap = 1;
+        this.maxChainGap = {external: 10, change: 5};
         this.bip44Accounts = new Accounts();
+        this.bip49Accounts = new Accounts();
         this.accounts = new Accounts();
     }
 
-    scan(progressCallBack){
-        const slowProgressCallBack = _.debounce( ()=> {
-            if (progressCallBack){
+    scan(progressCallBack) {
+        const slowProgressCallBack = _.debounce(() => {
+            if (progressCallBack) {
                 progressCallBack(this.accounts);
             }
         }, 200);
         return this.scanInt(slowProgressCallBack);
     }
 
-    scanInt(progressCallBack){
-        if (!this.hasRootAccount){
+    scanInt(progressCallBack) {
+        if (!this.hasRootAccount) {
             this.accounts.push(this.initRootAccount());
             this.hasRootAccount = true;
         }
@@ -71,18 +73,21 @@ class Masterscan {
         if (this.hasPrivateRootnode) {
 
             // add account type that BitcoinCore uses since 0.13
-            if (!this.hasCoreAccount){
+            if (!this.hasCoreAccount) {
                 this.accounts.push(this.initCoreAccount());
                 this.hasCoreAccount = true;
             }
 
             // add one "normal" bip44 account
-            this.extendAccounts(1);
+            this.extendBip44Accounts(1);
+
+            // add one segwit bip49 account
+            this.extendBip49Accounts(1);
         }
         progressCallBack();
 
         var req = [];
-        for (var i in this.accounts.accs){
+        for (var i in this.accounts.accs) {
             req.push(this.accounts.accs[i].scanAccount(progressCallBack));
         }
 
@@ -98,16 +103,16 @@ class Masterscan {
         });
     }
 
-    get publicRootnode(){
-        return this.hasPrivateRootnode ? this.rootnode.hdPublicKey : this.rootnode;
+    get publicRootnode() {
+        return this.rootnode.getPublicKeyBuffer();
     }
 
-    get hasPrivateRootnode(){
-        return this.rootnode instanceof HDPrivateKey;
+    get hasPrivateRootnode() {
+        return !this.rootnode.isNeutered();
     }
 
-    get rootnodeInfo(){
-        if (this.hasPrivateRootnode){
+    get rootnodeInfo() {
+        if (this.hasPrivateRootnode) {
             return this.rootnode + " / " + this.publicRootnode;
         } else {
             return this.publicRootnode;
@@ -115,22 +120,22 @@ class Masterscan {
     }
 
     // checks if there are at least $gap addresses synced but with out balance after the last address with balance
-    get isFullySynced(){
+    get isFullySynced() {
         var lastWithActivity = 0;
         var finalGap = -1;
-        for (var a in this.accounts.accs){
+        for (var a in this.accounts.accs) {
             var ak = this.accounts.accs[a];
-            if (ak.wasUsed){
+            if (ak.wasUsed) {
                 lastWithActivity = a;
             }
-            if ((!ak.wasUsed && ak.state=='sync') || ak.state=='err'){
+            if ((!ak.wasUsed && ak.state == 'sync') || ak.state == 'err') {
                 finalGap = a - lastWithActivity + 1;
             }
         }
         return finalGap >= this.maxAccountGap;
     }
 
-    extendAccounts(cnt){
+    extendBip44Accounts(cnt) {
         while (cnt > 0) {
             var account = this.initBip44Account(this.bip44Accounts.length);
             this.accounts.push(account);
@@ -139,30 +144,46 @@ class Masterscan {
         }
     }
 
-    initRootAccount(){
+    extendBip49Accounts(cnt) {
+        while (cnt > 0) {
+            var account = this.initBip49Account(this.bip49Accounts.length);
+            this.accounts.push(account);
+            this.bip49Accounts.push(account);
+            cnt--
+        }
+    }
+
+    initRootAccount() {
         return new Account(this.rootnode, this.maxChainGap, 'm', "Root account", this.context);
     }
 
-    initCoreAccount(){
-        return new CoreAccount(this.rootnode.derive("m/0'/0'"), this.maxChainGap, "m/0'/0'", "BitcoinCore account", this.context);
+    initCoreAccount() {
+        return new CoreAccount(this.rootnode.derivePath("m/0'/0'"), this.maxChainGap, "m/0'/0'", "BitcoinCore account", this.context);
     }
 
-    initBip44Account(idx){
+    initBip44Account(idx) {
         var path = `m/44'/${this.coinid}'/${idx}'`
-        var accountRoot = this.rootnode.derive(path);
+        var accountRoot = this.rootnode.derivePath(path);
         return new Account(accountRoot, this.maxChainGap, path, "Account " + idx, this.context);
     }
 
-    prepareTx(utxoSet, keyBag, dest, feePerByte){
+    initBip49Account(idx) {
+        var path = `m/49'/${this.coinid}'/${idx}'`
+        var accountRoot = this.rootnode.derivePath(path);
+        return new SegWitAccount(accountRoot, this.maxChainGap, path, "Segwit Account " + idx, this.context);
+    }
 
-        function mapUtxo(utxo){
+
+    prepareTx(utxoSet, keyBag, dest, feePerByte) {
+
+        function mapUtxo(utxo) {
             return new UnspentOutput({
-                txid:utxo.txid,
-                address:utxo.address,
-                outputIndex:utxo.vout,
-                satoshis:utxo.satoshis,
-                sequenceNumber:0xffff,
-                script:utxo.scriptPubKey,
+                txid: utxo.txid,
+                address: utxo.address,
+                outputIndex: utxo.vout,
+                satoshis: utxo.satoshis,
+                sequenceNumber: 0xffff,
+                script: utxo.scriptPubKey,
             })
         }
 
@@ -187,62 +208,62 @@ class Masterscan {
         });
     }
 
-    static fetchFee(blocks=2, insight){
+    static fetchFee(blocks = 2, insight) {
         return insight.getFeeEstimate(blocks)
             .then(d => {
                 const fee = d[blocks];
-                if (fee <= 0){
-                    throw new Error('Invalid fee ' +  fee);
+                if (fee <= 0) {
+                    throw new Error('Invalid fee ' + fee);
                 } else {
                     return Math.ceil(fee * 100000000 / 1024);
                 }
             });
     }
 
-    static broadcastTx(tx, insight){
+    static broadcastTx(tx, insight) {
         return insight.sendTransaction(tx);
     }
 
 }
 
-class UtxoSet{
-    constructor(utxos){
+class UtxoSet {
+    constructor(utxos) {
         this.utxoArray = utxos || [];
     }
 
-    get totalAmount(){
-        var total=0;
-        for (var i in this.utxoArray){
+    get totalAmount() {
+        var total = 0;
+        for (var i in this.utxoArray) {
             total += this.utxoArray[i].satoshis;
         }
         return total;
     }
 
-    get length(){
+    get length() {
         return this.utxoArray.length;
     }
 
-    concat(other){
+    concat(other) {
         return new UtxoSet(this.utxoArray.concat(other.utxoArray));
     }
 }
 
 class Accounts {
-    constructor(){
+    constructor() {
         this.accs = [];
     }
 
-    getUtxo(){
+    getUtxo() {
         var all = new UtxoSet([]);
-        for (var i in this.accs){
+        for (var i in this.accs) {
             all = all.concat(this.accs[i].getUtxo());
         }
         return all;
     }
 
-    getActiveUtxo(){
+    getActiveUtxo() {
         var all = new UtxoSet([]);
-        for (var i in this.accs){
+        for (var i in this.accs) {
             if (this.accs[i].active) {
                 all = all.concat(this.accs[i].getUtxo());
             }
@@ -250,7 +271,7 @@ class Accounts {
         return all;
     }
 
-    getByPath(path){
+    getByPath(path) {
         return _.find(this.accs, e => e.path == path);
     }
 
@@ -261,39 +282,41 @@ class Accounts {
     }
 
     get state() {
-        var states = this.accs.map((curr) => {return{state: curr.state}});
+        var states = this.accs.map((curr) => {
+            return {state: curr.state}
+        });
         return Chain.significantState(states);
     }
 
-    get numUsedAccounts(){
-        var cnt=0;
-        for (var i in this.accs){
+    get numUsedAccounts() {
+        var cnt = 0;
+        for (var i in this.accs) {
             if (this.accs[i].wasUsed) cnt++;
         }
         return cnt;
     }
 
-    get length(){
+    get length() {
         return this.accs.length;
     }
 
-    get balance(){
+    get balance() {
         var total = 0;
-        for (var i in this.accs){
+        for (var i in this.accs) {
             total += this.accs[i].balance;
         }
         return total;
     }
 
-    push(account){
+    push(account) {
         this.accs.push(account)
     }
 
 }
 
 
-class Account{
-    constructor(root, gaps, path, name, context){
+class Account {
+    constructor(root, gaps, path, name, context) {
         this.root = root;
         this.gaps = gaps;
         this.path = path;
@@ -301,14 +324,20 @@ class Account{
         this.name = name;
         this.active = true; // include it in the UTXO set
         this.isShown = null;
+        this.initChains();
+    }
+
+    initChains() {
         this.chains = [
-            new Chain(root.derive('m/0'), gaps.external, path + '/0',"External chain", this.context),
-            new Chain(root.derive('m/1'), gaps.change, path + '/1', "Change chain", this.context)
+            new Chain(this.root, this.gaps.external, this.path, "Root chain", this.context),
+            //new Chain(root.derivePath('0\'/0'), gaps.external, path + '/0\'/0',"BATM chain", this.context),
+            new Chain(this.root.derivePath('0'), this.gaps.external, this.path + '/0', "External chain", this.context),
+            new Chain(this.root.derivePath('1'), this.gaps.change, this.path + '/1', "Change chain", this.context)
         ];
     }
 
-    get shown(){
-        if (this.isShown === null){
+    get shown() {
+        if (this.isShown === null) {
             return this.wasUsed;
         } else {
             return this.isShown;
@@ -316,7 +345,7 @@ class Account{
     }
 
     get wasUsed() {
-        for (var i in this.chains){
+        for (var i in this.chains) {
             if (this.chains[i].wasUsed) {
                 return true;
             }
@@ -325,24 +354,26 @@ class Account{
     }
 
     get keyBag() {
-        return this.chains.reduce((p,c)=>p.concat(c.keyBag), []);
+        return this.chains.reduce((p, c) => p.concat(c.keyBag), []);
     }
 
     get state() {
-        var states = this.chains.map(c => {return {state:c.state}});
+        var states = this.chains.map(c => {
+            return {state: c.state}
+        });
         return Chain.significantState(states);
     }
 
-    get balance(){
+    get balance() {
         return this.getUtxo().totalAmount;
     }
 
-    getUtxo(){
-        return this.chains.reduce((p,c)=>p.concat(c.getAllUtxo()), new UtxoSet([]));
+    getUtxo() {
+        return this.chains.reduce((p, c) => p.concat(c.getAllUtxo()), new UtxoSet([]));
     }
 
-    get isFullySynced(){
-        for (var i in this.chains){
+    get isFullySynced() {
+        for (var i in this.chains) {
             if (!this.chains[i].isFullySynced) {
                 return false;
             }
@@ -350,19 +381,19 @@ class Account{
         return true;
     }
 
-    initScanChain(progressCallBack){
+    initScanChain(progressCallBack) {
         return Promise.all(
             this.chains.map(c => this.scanChain(c, progressCallBack))
         )
     }
 
-    scanAccount(progressCallBack){
-        if (this.isFullySynced){
+    scanAccount(progressCallBack) {
+        if (this.isFullySynced) {
             return Promise.resolve(true);
         }
         return this.initScanChain(progressCallBack)
             .then(() => {
-                if (this.isFullySynced){
+                if (this.isFullySynced) {
                     return true;
                 } else {
                     // scan until everything is fully synced
@@ -378,14 +409,14 @@ class Account{
         }
 
         var toScan = chain.getAddressesToScan();
-        if (toScan.length == 0){
+        if (toScan.length == 0) {
             chain.extend();
             toScan = chain.getAddressesToScan();
         }
 
 
         var req = [];
-        for (var i in toScan){
+        for (var i in toScan) {
             const ak = toScan[i];
             ak.state = 'scan';
             req.push(
@@ -409,7 +440,7 @@ class Account{
                         }
                     })
                     .catch(e => {
-                        ak.state='err';
+                        ak.state = 'err';
                         ak.err = e;
                     })
             );
@@ -421,19 +452,32 @@ class Account{
 
 // can be used with bitcoin core >0.13
 // https://github.com/bitcoin/bitcoin/blob/0.13/doc/release-notes.md#hierarchical-deterministic-key-generation
-class CoreAccount extends Account{
-    constructor(root, gaps, path, name, context){
-        super(root, gaps, path, name, context);
+class CoreAccount extends Account {
+
+    initChains() {
         this.chains = [
-            new CoreChain(root, gaps.external, path, "HD Chain", this.context)
+            new CoreChain(this.root, this.gaps.external, this.path, "HD Chain", this.context)
         ];
     }
 
 }
 
+// can be used with bitcoin core >0.13
+// https://github.com/bitcoin/bitcoin/blob/0.13/doc/release-notes.md#hierarchical-deterministic-key-generation
+class SegWitAccount extends Account {
 
-class Chain{
-    constructor(root, gap, path, label, context){
+    initChains() {
+        this.chains = [
+            new SegWitChain(this.root, this.gaps.external, this.path, "Root chain", this.context),
+            //new Chain(root.derivePath('0\'/0'), gaps.external, path + '/0\'/0',"BATM chain", this.context),
+            new SegWitChain(this.root.derivePath('0'), this.gaps.external, this.path + '/0', "External chain", this.context),
+            new SegWitChain(this.root.derivePath('1'), this.gaps.change, this.path + '/1', "Change chain", this.context)
+        ];
+    }
+}
+
+class Chain {
+    constructor(root, gap, path, label, context) {
         this.root = root;
         this.gap = gap;
         this.path = path;
@@ -444,8 +488,8 @@ class Chain{
         this.extend();
     }
 
-    get wasUsed(){
-        for (var a in this.addresses){
+    get wasUsed() {
+        for (var a in this.addresses) {
             if (this.addresses[a].totalRecv > 0) return true;
         }
         return false;
@@ -461,9 +505,9 @@ class Chain{
 
     static significantState(arr) {
         var stateCount = {}
-        for (var a in arr){
+        for (var a in arr) {
             if (!stateCount[arr[a].state]) stateCount[arr[a].state] = 0;
-            stateCount[arr[a].state] ++;
+            stateCount[arr[a].state]++;
         }
         if (stateCount['err'] > 0) return 'err';
         if (stateCount['scan'] > 0) return 'scan';
@@ -473,23 +517,34 @@ class Chain{
         return 'sync';
     }
 
-    deriveNode(idx){
-        return this.root.derive(`m/${idx}`);
+    deriveNode(idx) {
+        return this.root.derivePath(`${idx}`);
     }
 
-    derivePath(idx){
+    derivePath(idx) {
         return this.path + '/' + idx;
     }
 
-    extend(){
+    nodeToAddress(privNode){
+        return privNode.getAddress();
+    }
+
+    extend() {
         var addressCnt = 0;
         var idx = this.length;
         var reqs = [];
-        while(addressCnt < this.gap){
+        while (addressCnt < this.gap) {
             var node = this.deriveNode(idx);
-            var pubNode = node.hdPublicKey || node;
-            var addr = pubNode.publicKey.toAddress(this.context.network).toString();
-            this.addresses.push({addr: addr, path: this.derivePath(idx), idx:idx, utxo:null, balance:null, totalRecv:null, state: 'unk'});
+            var addr = this.nodeToAddress(node)
+            this.addresses.push({
+                addr: addr,
+                path: this.derivePath(idx),
+                idx: idx,
+                utxo: null,
+                balance: null,
+                totalRecv: null,
+                state: 'unk'
+            });
             this.keyBag.push(node.privateKey);
             addressCnt++;
             idx++;
@@ -498,9 +553,9 @@ class Chain{
 
     getAllUtxo() {
         var ret = [];
-        for (var a in this.addresses){
+        for (var a in this.addresses) {
             if (this.addresses[a].utxo != null && this.addresses[a].utxo.length > 0) {
-                $.each(this.addresses[a].utxo, (k,v) => v.addrPath = this.addresses[a].path);
+                $.each(this.addresses[a].utxo, (k, v) => v.addrPath = this.addresses[a].path);
 
                 ret = ret.concat(this.addresses[a].utxo);
             }
@@ -508,9 +563,9 @@ class Chain{
         return new UtxoSet(ret);
     }
 
-    getAddressesToScan(){
+    getAddressesToScan() {
         var ret = [];
-        for (var a in this.addresses){
+        for (var a in this.addresses) {
             if (this.addresses[a].state == 'unk') {
                 ret.push(this.addresses[a]);
             }
@@ -519,15 +574,15 @@ class Chain{
     }
 
     // checks if there are at least $gap addresses synced but with out balance after the last address with balance
-    get isFullySynced(){
+    get isFullySynced() {
         var lastWithActivity = 0;
         var finalGap = -1;
-        for (var a in this.addresses){
+        for (var a in this.addresses) {
             var ak = this.addresses[a];
-            if (ak.totalRecv > 0){
+            if (ak.totalRecv > 0) {
                 lastWithActivity = a;
             }
-            if ((ak.totalRecv == 0 && ak.state=='sync') || ak.state=='err'){
+            if ((ak.totalRecv == 0 && ak.state == 'sync') || ak.state == 'err') {
                 finalGap = a - lastWithActivity + 1;
             }
         }
@@ -536,12 +591,20 @@ class Chain{
 }
 
 class CoreChain extends Chain {
-    deriveNode(idx){
-        return this.root.derive(`m/${idx}'`);
+    deriveNode(idx) {
+        return this.root.derivePath(`${idx}'`);
     }
 
-    derivePath(idx){
+    derivePath(idx) {
         return this.path + '/' + idx + "'";
+    }
+}
+
+class SegWitChain extends Chain {
+    nodeToAddress(privNode){
+        const redeemScript = bitcoin.script.witnessPubKeyHash.output.encode(bitcoin.crypto.hash160(privNode.getPublicKeyBuffer()))
+        const scriptPubKey = bitcoin.script.scriptHash.output.encode(bitcoin.crypto.hash160(redeemScript))
+        return bitcoin.address.fromOutputScript(scriptPubKey, this.context.network);
     }
 }
 

@@ -19,14 +19,14 @@ const styleToastr = require('../node_modules/toastr/build/toastr.css'); //cssify
 
 const bitcore = require('bitcore-lib');
 const Address = bitcore.Address;
-const Networks = bitcore.Networks;
 const Transaction = bitcore.Transaction;
+const bitcoin = require('bitcoinjs-lib');
 
 const Masterscan = require('./masterscan');
 
 const cfg = {
-    network: bitcore.Networks.testnet,
-    //network : bitcore.Networks.livenet,
+    network: bitcoin.networks.testnet,
+    //network : bitcoin.networks.bitcoin,
     version: '0.3',
 };
 
@@ -106,15 +106,16 @@ document.addEventListener('DOMContentLoaded', function () {
     const argNet = getUrlParameter('net');
     if (argNet){
         const isProdnet = argNet=='prodnet';
-        cfg.network =  isProdnet ? Networks.livenet : Networks.testnet;
+        cfg.network =  isProdnet ? bitcoin.networks.bitcoin : bitcoin.networks.testnet;
     } else {
-        cfg.network = Networks.testnet;
+        cfg.network = bitcoin.networks.testnet;
     }
-    if (cfg.network === Networks.livenet) {
+    if (cfg.network === bitcoin.networks.bitcoin) {
         cfg.blockexplorer = blockexplorers.prodnet;
         ui.liNetSwitcherProdnet.addClass('hidden');
         ui.spNetMode.text("Prodnet");
         insight = new Insight('insight.bitpay.com');
+        //insight = new Insight('bch-insight.bitpay.com');
         ui.modalDisclaimer.modal('show');
     } else {
         cfg.blockexplorer = blockexplorers.testnet;
@@ -214,7 +215,8 @@ document.addEventListener('DOMContentLoaded', function () {
     });
 
     ui.btnUpdateTransaction.click(()=> {
-        if (lastResult) updateTransaction(lastResult);
+        //if (lastResult) updateTransaction(lastResult);
+        updateTransaction(lastResult);
     });
 
     ui.btnSendTransaction.click(() => {

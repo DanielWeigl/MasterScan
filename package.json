@@ -14,28 +14,30 @@
   "dependencies": {
     "bitcore-lib": "^0.13.18",
     "bitcore-mnemonic": "^1.1.1",
+    "bip39": "^2.5.0",
+    "bitcoinjs-lib": "^3.3.2",
     "bootstrap": "^3.3.7",
-    "bower": "^1.7.9",
-    "canvas": "^1.4.0",
-    "handlebars": "^4.0.5",
-    "jquery": "^3.1.0",
-    "sass-brunch": "^2.6.3",
-    "toastr": "^2.1.2",
-    "whatwg-fetch": "^1.0.0"
+    "bower": "^1.8.4",
+    "canvas": "^1.6.10",
+    "handlebars": "^4.0.11",
+    "jquery": "^3.3.0",
+    "sass-brunch": "^2.10.4",
+    "toastr": "^2.1.4",
+    "whatwg-fetch": "^1.1.1"
   },
   "devDependencies": {
     "auto-reload-brunch": "^2.0.0",
-    "babel-brunch": "^6.0.6",
-    "babel-preset-es2015": "^6.13.2",
+    "babel-brunch": "^6.1.1",
+    "babel-preset-es2015": "^6.24.1",
     "babelify": "^7.3.0",
     "browserify": "^5.0.0",
     "browserify-brunch": "^1.7.3",
-    "brunch": "^2.0.0",
-    "clean-css-brunch": "^2.0.0",
-    "css-brunch": "^2.0.0",
+    "brunch": "^2.10.12",
+    "clean-css-brunch": "^2.10.0",
+    "css-brunch": "^2.10.0",
     "cssify": "^0.6.0",
-    "javascript-brunch": "^2.0.0",
-    "uglify-js-brunch": "^2.0.0"
+    "javascript-brunch": "^2.10.0",
+    "uglify-js-brunch": "^2.10.0"
   },
   "browserify": {
     "transform": [
