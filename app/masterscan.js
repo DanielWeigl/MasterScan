@@ -7,6 +7,7 @@ const bitcoin = require('bitcoinjs-lib');
 const bitcore = require('bitcore-lib');
 const HDPrivateKey = bitcore.HDPrivateKey;
 const HDPublicKey = bitcore.HDPublicKey;
+var Buffer = require('safe-buffer').Buffer
 const Networks = bitcore.Networks;
 const Transaction = bitcore.Transaction;
 
@@ -175,7 +176,7 @@ class Masterscan {
 
 
     prepareTx(utxoSet, keyBag, dest, feePerByte) {
-
+/*
         function mapUtxo(utxo) {
             return new UnspentOutput({
                 txid: utxo.txid,
@@ -186,14 +187,22 @@ class Masterscan {
                 script: utxo.scriptPubKey,
             })
         }
-
+*/
         return new Promise((okay, fail) => {
-            var transaction = new bitcore.Transaction();
+            var txb = new bitcoin.TransactionBuilder(this.context.network);
+
+
+//            var transaction = new bitcore.Transaction();
+            var keyMapping=[];
             for (var i in utxoSet.utxoArray) {
-                transaction.from(mapUtxo(utxoSet.utxoArray[i]));
+//                transaction.from(mapUtxo(utxoSet.utxoArray[i]));
+                const utxo=utxoSet.utxoArray[i];
+                txb.addInput(utxo.txid, utxo.vout, 0xffff, Buffer.from(utxo.scriptPubKey, 'hex'))
+                keyMapping[i]={address:utxo.address, key:keyBag[utxo.address]};
             }
-            transaction.to(dest, utxoSet.totalAmount);
-            transaction.sign(keyBag);
+            txb.addOutput(dest, utxoSet.totalAmount); // the actual "spend"
+            //transaction.to(dest, );
+            //transaction.sign(keyBag);
 
             // fee calculation
             const txSize = transaction.toBuffer().length;
@@ -277,8 +286,8 @@ class Accounts {
 
     get keyBag() {
         return this.accs.reduce((prev, curr) => {
-            return prev.concat(curr.keyBag);
-        }, []);
+            return _.extend(prev, curr.keyBag);
+        }, {});
     }
 
     get state() {
@@ -354,7 +363,7 @@ class Account {
     }
 
     get keyBag() {
-        return this.chains.reduce((p, c) => p.concat(c.keyBag), []);
+        return this.chains.reduce((p, c) => _.extend(p, c.keyBag), {});
     }
 
     get state() {
@@ -484,7 +493,7 @@ class Chain {
         this.label = label;
         this.context = context;
         this.addresses = [];
-        this.keyBag = [];
+        this.keyBag = {};
         this.extend();
     }
 
@@ -545,7 +554,7 @@ class Chain {
                 totalRecv: null,
                 state: 'unk'
             });
-            this.keyBag.push(node.privateKey);
+            this.keyBag[addr]=node.keyPair;
             addressCnt++;
             idx++;
         }

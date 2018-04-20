@@ -237,7 +237,7 @@ document.addEventListener('DOMContentLoaded', function () {
         scanQr(function(data){
             var str = (data.indexOf('bitcoin:') === 0) ? data.substring(8) : data;
             console.log('QR code detected: ' + str);
-            if (Address.isValid(str, cfg.network)){
+            if (validateAddress(str, cfg.network)){
                 ui.txReceiverAddress.val(str);
                 clearTx();
             } else {
@@ -302,6 +302,15 @@ document.addEventListener('DOMContentLoaded', function () {
         }
     });
 
+    function validateAddress (address, network) {
+        try {
+            bitcoin.address.toOutputScript(address, network);
+            return true
+        } catch (e) {
+            return false
+        }
+    }
+
     function clearTx(){
         ui.txTransaction.val("");
         ui.spTotalFee.text("n/a");
@@ -325,7 +334,7 @@ document.addEventListener('DOMContentLoaded', function () {
         const addr = ui.txReceiverAddress.val();
         const fee = ui.txFeePerByte.val();
 
-        if (!Address.isValid(addr, cfg.network)){
+        if (!validateAddress(addr, cfg.network)){
             clearTx();
             ui.divTxTransaction.addClass("has-error");
             return;
@@ -337,7 +346,7 @@ document.addEventListener('DOMContentLoaded', function () {
             return;
         }
 
-        if (utxos.length == 0){
+        if (utxos.length === 0){
             clearTx();
             return;
         }
