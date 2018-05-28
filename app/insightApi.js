@@ -1,13 +1,14 @@
 'use strict';
 
 require('whatwg-fetch');
+delete global._bitcore
 const bitcore = require('bitcore-lib');
 const Transaction = bitcore.Transaction;
 const _ = require('lodash');
 const INSIGHT_ENDPOINT = 'api';
 
 class Insight {
-    constructor(host){
+    constructor(host) {
         this.host = host;
         this.inFlight = 0;
     }
@@ -51,14 +52,14 @@ class Insight {
         return this.unwrapJson(this.queuedFetch(this.sanitizeURL(endpoint)));
     }
 
-    unwrapJson(response){
+    unwrapJson(response) {
         return response.then(d => {
             if (d.ok) {
                 return d.json();
             } else {
                 // we got a non-json error response
                 return d.text().then(txt => {
-                    throw new Error (txt);
+                    throw new Error(txt);
                 });
             }
         });
@@ -66,33 +67,69 @@ class Insight {
 
     // some browser dont limit the amount of parallel requests (firefox) and the remote service returns
     // overload errors. This function only allows to have a certain amount of pending ajax request running.
-    queuedFetch(url, config){
+    queuedFetch(url, config) {
         var that = this;
         var p = new Promise((okay, fail) => {
-            function doIt(){
+            function doIt() {
                 that.inFlight++;
-                fetch(url, config)
-                    .then((d)=> {
+                that.fetchRetry(url, 1000, 10, config)
+                    .then((d) => {
                         that.inFlight--;
                         okay(d);
-                    }).catch((e)=> {
+                    })
+                    .catch((e) => {
                         that.inFlight--;
                         fail(e);
                     });
             }
 
             function checkIt() {
-                if (that.inFlight > 6) {
-                    window.setTimeout(checkIt, 100);
+                if (that.inFlight > 3) {
+                    window.setTimeout(checkIt, 250);
                 } else {
                     doIt();
                 }
             }
+
             checkIt();
         });
         return p;
     }
 
+    // base on: https://stackoverflow.com/questions/46175660/fetch-api-retry-if-http-request-fails
+    // retry the fetch a few times with increasing delay to handle ratelimiting erros better
+    fetchRetry(url, delay, limit, fetchOptions = {}) {
+        return new Promise((resolve, reject) => {
+            function success(response) {
+                resolve(response);
+            }
+
+            function failure(error) {
+                limit--;
+                if (limit) {
+                    setTimeout(fetchUrl, delay)
+                    delay = delay * 1.5;
+                }
+                else {
+                    // this time it failed for real
+                    reject(error);
+                }
+            }
+
+            function finalHandler(finalError) {
+                throw finalError;
+            }
+
+            function fetchUrl() {
+                return fetch(url, fetchOptions)
+                    .then(success)
+                    .catch(failure)
+                    .catch(finalHandler);
+            }
+
+            fetchUrl();
+        });
+    }
 
     sanitizeURL(url) {
         url = `${this.host}/${INSIGHT_ENDPOINT}` + url;

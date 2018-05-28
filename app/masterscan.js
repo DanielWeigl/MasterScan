@@ -1,7 +1,7 @@
 'use strict';
 
 const _ = require('lodash');
-
+delete global._bitcore
 const bitcore = require('bitcore-lib');
 const HDPrivateKey = bitcore.HDPrivateKey;
 const HDPublicKey = bitcore.HDPublicKey;
@@ -302,8 +302,10 @@ class Account{
         this.active = true; // include it in the UTXO set
         this.isShown = null;
         this.chains = [
-            new Chain(root.derive('m/0'), gaps.external, path + '/0',"External chain", this.context),
-            new Chain(root.derive('m/1'), gaps.change, path + '/1', "Change chain", this.context)
+            //new Chain(root, gaps.external, path,"Root chain", this.context),
+            new Chain(root.derive('m/0\'/0'), gaps.external, path + '/0\'/0',"BATM chain", this.context),
+            // new Chain(root.derive('m/0'), gaps.external, path + '/0',"External chain", this.context),
+            // new Chain(root.derive('m/1'), gaps.change, path + '/1', "Change chain", this.context)
         ];
     }
 

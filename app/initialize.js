@@ -16,7 +16,7 @@ require('bootstrap');
 const toastr = require('toastr');
 const styleToastr = require('../node_modules/toastr/build/toastr.css'); //cssify
 
-
+delete global._bitcore
 const bitcore = require('bitcore-lib');
 const Address = bitcore.Address;
 const Networks = bitcore.Networks;
